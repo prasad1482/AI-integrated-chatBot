@@ -8,10 +8,14 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 from langchain.retrievers import EnsembleRetriever
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_core.chat_history import BaseChatMessageHistory
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from scr.helper import load_pdf_files, filter_to_minimal_doc, text_split
 
 # Load environment variables
 load_dotenv()
@@ -40,15 +44,11 @@ docsearch = PineconeVectorStore(
 # Define the semantic retriever
 semantic_retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k": 3})
 
-# To use BM25, we need the text chunks. Since you're indexing separately,
-# we need to load them here to build the BM25 index in memory.
-# This is a key step to make hybrid search work.
-# For this example, we'll use a placeholder for a small keyword index.
-text_chunks = [
-    Document(page_content="Acne is a common skin condition that occurs when hair follicles become clogged with oil and dead skin cells."),
-    Document(page_content="Influenza is a contagious respiratory illness caused by influenza viruses. It can cause mild to severe illness."),
-    Document(page_content="Pneumonia is an infection that inflames air sacs in one or both lungs. The air sacs may fill with fluid or pus.")
-]
+# To use BM25, we need the text chunks. We will load the full dataset here.
+print("Loading medical data for BM25 retriever...")
+extracted_docs = load_pdf_files("data")
+minimal_docs = filter_to_minimal_doc(extracted_docs)
+text_chunks = text_split(minimal_docs)
 keyword_retriever = BM25Retriever.from_documents(text_chunks)
 keyword_retriever.k = 3
 
@@ -61,22 +61,42 @@ hybrid_retriever = EnsembleRetriever(
 # Define the LLM and prompt template
 chatModel = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=GOOGLE_API_KEY)
 
-prompt = ChatPromptTemplate.from_template(
-    "You are MedBot, a helpful and knowledgeable medical assistant. "
-    "You are not a doctor, but you can provide general health information, "
-    "explain symptoms, suggest possible causes, and guide users toward professional help. "
-    "Always remind users to consult a licensed healthcare provider for diagnosis or treatment. "
-    "Be empathetic, respectful, and clear in your responses. Avoid giving definitive diagnoses or prescribing medications."
-    "\n\nIf a user asks for emergency help, advise them to contact emergency services immediately."
-    "\n\nTone: Professional, supportive, and informative."
-    "\nKnowledge Base: General medical knowledge, symptoms, wellness tips, and healthcare guidance."
-    "\nLimitations: Do not provide medical diagnoses, prescribe treatments, or replace professional medical advice."
-    "\n\nContext:\n{context}\n\nQuestion: {input}"
+prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", 
+         "You are MedBot, a helpful and knowledgeable medical assistant. "
+         "You are not a doctor, but you can provide general health information, "
+         "explain symptoms, suggest possible causes, and guide users toward professional help. "
+         "Always remind users to consult a licensed healthcare provider for diagnosis or treatment. "
+         "Be empathetic, respectful, and clear in your responses. Avoid giving definitive diagnoses or prescribing medications."
+         "\n\nIf a user asks for emergency help, advise them to contact emergency services immediately."
+         "\n\nTone: Professional, supportive, and informative."
+         "\nKnowledge Base: General medical knowledge, symptoms, wellness tips, and healthcare guidance."
+         "\nLimitations: Do not provide medical diagnoses, prescribe treatments, or replace professional medical advice."
+         "\n\nContext:\n{context}"),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{input}"),
+    ]
 )
 
 # Create the RAG chain
 question_answer_chain = create_stuff_documents_chain(chatModel, prompt)
 rag_chain = create_retrieval_chain(hybrid_retriever, question_answer_chain)
+
+# In-memory session store
+store = {}
+def get_session_history(session_id: str) -> BaseChatMessageHistory:
+    if session_id not in store:
+        store[session_id] = InMemoryChatMessageHistory()
+    return store[session_id]
+
+# Final chain with message history
+conversational_rag_chain = RunnableWithMessageHistory(
+    rag_chain,
+    get_session_history,
+    input_messages_key="input",
+    history_messages_key="chat_history",
+)
 
 # --- API ENDPOINT ---
 
@@ -93,13 +113,17 @@ def home():
 def chat():
     data = request.get_json()
     user_message = data.get("message")
+    session_id = data.get("session_id", "default_session_id") # Use a default ID or create one
 
     if not user_message:
         return jsonify({"error": "No message provided"}), 400
 
     try:
         # Invoke the RAG chain
-        response = rag_chain.invoke({"input": user_message})
+        response = conversational_rag_chain.invoke(
+            {"input": user_message},
+            config={"configurable": {"session_id": session_id}}
+        )
         return jsonify({"answer": response["answer"]})
     except Exception as e:
         print(f"An error occurred: {e}")
