@@ -1,4 +1,6 @@
 # **AI-integrated Medical Chatbot**
+![Uploading image.png…]()
+
 
 ## **Project Description**
 
