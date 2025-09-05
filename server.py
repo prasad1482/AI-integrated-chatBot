@@ -15,6 +15,7 @@ from langchain.retrievers import EnsembleRetriever
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain.chains import create_history_aware_retriever
 from scr.helper import load_pdf_files, filter_to_minimal_doc, text_split
 
 # Load environment variables
@@ -61,7 +62,27 @@ hybrid_retriever = EnsembleRetriever(
 # Define the LLM and prompt template
 chatModel = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=GOOGLE_API_KEY)
 
-prompt = ChatPromptTemplate.from_messages(
+# Contextualize Question Prompt
+# This prompt rephrases the user's question based on chat history
+contextualize_q_prompt = ChatPromptTemplate.from_messages(
+    [
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", 
+         "Given the following conversation and a follow-up question, rephrase the follow-up question to be a standalone question. "
+         "If the user's question is already a standalone question, simply return it without modification. "
+         "\n\nFollow-up Question: {input}"
+         "\n\nStandalone question:")
+    ]
+)
+
+# The new history-aware retriever
+history_aware_retriever = create_history_aware_retriever(
+    chatModel, hybrid_retriever, contextualize_q_prompt
+)
+
+# Answer Prompt
+# This is the main prompt for generating the final answer
+answer_prompt = ChatPromptTemplate.from_messages(
     [
         ("system", 
          "You are MedBot, a helpful and knowledgeable medical assistant. "
@@ -70,18 +91,15 @@ prompt = ChatPromptTemplate.from_messages(
          "Always remind users to consult a licensed healthcare provider for diagnosis or treatment. "
          "Be empathetic, respectful, and clear in your responses. Avoid giving definitive diagnoses or prescribing medications."
          "\n\nIf a user asks for emergency help, advise them to contact emergency services immediately."
-         "\n\nTone: Professional, supportive, and informative."
-         "\nKnowledge Base: General medical knowledge, symptoms, wellness tips, and healthcare guidance."
-         "\nLimitations: Do not provide medical diagnoses, prescribe treatments, or replace professional medical advice."
          "\n\nContext:\n{context}"),
         MessagesPlaceholder(variable_name="chat_history"),
         ("human", "{input}"),
     ]
 )
 
-# Create the RAG chain
-question_answer_chain = create_stuff_documents_chain(chatModel, prompt)
-rag_chain = create_retrieval_chain(hybrid_retriever, question_answer_chain)
+# Final RAG chain
+question_answer_chain = create_stuff_documents_chain(chatModel, answer_prompt)
+rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
 # In-memory session store
 store = {}
