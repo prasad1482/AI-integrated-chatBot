@@ -11,3 +11,4 @@ pinecone-client
 python-dotenv
 gunicorn
 rank-bm25
+pypdf
