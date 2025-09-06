@@ -42,6 +42,9 @@ docsearch = PineconeVectorStore(
     embedding=embeddings,
 )
 
+# Define the semantic retriever
+semantic_retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k": 3})
+
 # To use BM25, we need the text chunks. We will load the full dataset here.
 print("Loading medical data for BM25 retriever...")
 # We use os.path.dirname(__file__) to get the directory of the current file (app.py)
@@ -60,9 +63,6 @@ if not text_chunks:
 
 keyword_retriever = BM25Retriever.from_documents(text_chunks)
 keyword_retriever.k = 3
-
-# Define the semantic retriever
-semantic_retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k": 3})
 
 # Combine both retrievers into a single hybrid retriever
 hybrid_retriever = EnsembleRetriever(
@@ -158,4 +158,3 @@ def chat():
 
 if __name__ == "__main__":
     app.run(debug=True)
-
