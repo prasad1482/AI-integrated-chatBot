@@ -42,16 +42,27 @@ docsearch = PineconeVectorStore(
     embedding=embeddings,
 )
 
-# Define the semantic retriever
-semantic_retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k": 3})
-
 # To use BM25, we need the text chunks. We will load the full dataset here.
 print("Loading medical data for BM25 retriever...")
-extracted_docs = load_pdf_files("data")
-minimal_docs = filter_to_minimal_doc(extracted_docs)
-text_chunks = text_split(minimal_docs)
+# We use os.path.dirname(__file__) to get the directory of the current file (app.py)
+# and then construct an absolute path to the data directory.
+data_path = os.path.join(os.path.dirname(__file__), "data")
+if not os.path.exists(data_path):
+    print(f"Error: The data directory '{data_path}' was not found.")
+    text_chunks = []
+else:
+    extracted_docs = load_pdf_files(data_path)
+    minimal_docs = filter_to_minimal_doc(extracted_docs)
+    text_chunks = text_split(minimal_docs)
+
+if not text_chunks:
+    print("Warning: No text chunks were loaded. The keyword retriever will be empty.")
+
 keyword_retriever = BM25Retriever.from_documents(text_chunks)
 keyword_retriever.k = 3
+
+# Define the semantic retriever
+semantic_retriever = docsearch.as_retriever(search_type="similarity", search_kwargs={"k": 3})
 
 # Combine both retrievers into a single hybrid retriever
 hybrid_retriever = EnsembleRetriever(
@@ -63,7 +74,6 @@ hybrid_retriever = EnsembleRetriever(
 chatModel = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=GOOGLE_API_KEY)
 
 # Contextualize Question Prompt
-# This prompt rephrases the user's question based on chat history
 contextualize_q_prompt = ChatPromptTemplate.from_messages(
     [
         MessagesPlaceholder(variable_name="chat_history"),
@@ -81,7 +91,6 @@ history_aware_retriever = create_history_aware_retriever(
 )
 
 # Answer Prompt
-# This is the main prompt for generating the final answer
 answer_prompt = ChatPromptTemplate.from_messages(
     [
         ("system", 
@@ -149,3 +158,4 @@ def chat():
 
 if __name__ == "__main__":
     app.run(debug=True)
+
