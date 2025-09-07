@@ -76,12 +76,13 @@ chatModel = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=GOOG
 # Contextualize Question Prompt
 contextualize_q_prompt = ChatPromptTemplate.from_messages(
     [
+        ("system", 
+         "Given a chat history and the latest user question, which might be a follow-up, "
+         "rephrase the follow-up question into a standalone question. "
+         "If the question is already standalone, return it as is."
+         "\n\nChat History:\n{chat_history}"
+         "\n\nLatest Question: {input}"),
         MessagesPlaceholder(variable_name="chat_history"),
-        ("human", 
-         "Given the following conversation and a follow-up question, rephrase the follow-up question to be a standalone question. "
-         "If the user's question is already a standalone question, simply return it without modification. "
-         "\n\nFollow-up Question: {input}"
-         "\n\nStandalone question:")
     ]
 )
 
